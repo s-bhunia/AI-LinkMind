@@ -1,15 +1,18 @@
 'use server';
 
-import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
+import { ai } from '@/ai/genkit';
+import { z } from 'genkit';
 import * as cheerio from 'cheerio';
 
+
+const BOT_USER_AGENT = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)';
+
 async function extractMetadataFallback(url: string) {
-  // Fallback: Extract metadata using basic fetch without scraping
   try {
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': BOT_USER_AGENT,
+        'Accept-Language': 'en-US,en;q=0.9',
       },
     });
 
@@ -26,14 +29,23 @@ async function extractMetadataFallback(url: string) {
       creatorName: $('meta[property="og:site_name"]').attr('content') || 'Unknown',
       thumbnailUrl: $('meta[property="og:image"]').attr('content') || '',
     };
-  } catch (error) {
-    console.error('Fallback metadata extraction failed:', error);
-    return {
-      title: 'Link from ' + new URL(url).hostname,
-      description: 'No description available',
-      creatorName: 'Unknown',
-      thumbnailUrl: '',
-    };
+  } catch (error: any) {
+    console.warn(`Fallback blocked (${error.message}). Extracting domain instead.`);
+    
+    // ULTIMATE FALLBACK: If the site completely blocks us, grab the domain from the URL
+    // so Gemini at least has something to categorize!
+    try {
+      const domain = new URL(url).hostname.replace('www.', '');
+      return {
+        title: `Web link to ${domain}`,
+        description: `Content hosted on ${domain}`,
+        creatorName: domain,
+        thumbnailUrl: '', // Keeps Zod happy
+      };
+    } catch (parseError) {
+      // If the URL itself is completely broken
+      return { title: 'No title found', description: 'No description found', creatorName: 'Unknown', thumbnailUrl: '' };
+    }
   }
 }
 
@@ -41,73 +53,43 @@ async function extractMetadata(url: string) {
   const SCRAPING_API_KEY = process.env.BROWSERLESS_API_KEY;
   
   if (!SCRAPING_API_KEY) {
-    console.warn('BROWSERLESS_API_KEY not configured, using fallback metadata extraction');
     return extractMetadataFallback(url);
   }
 
-  const scrapingUrl = `https://chrome.browserless.io/scrape?token=${SCRAPING_API_KEY}`;
+  // Browserless /content API is usually better for raw HTML than /scrape
+  const scrapingUrl = `https://chrome.browserless.io/content?token=${SCRAPING_API_KEY}`;
 
   try {
     const response = await fetch(scrapingUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         url: url,
-        elements: [{ selector: 'body' }],
+        // Tell Browserless to disguise itself
+        setExtraHTTPHeaders: {
+            'User-Agent': BOT_USER_AGENT,
+            'Accept-Language': 'en-US,en;q=0.9'
+        },
+        stealth: true, // Turns on anti-bot evasion
+        gotoOptions: { waitUntil: 'domcontentloaded' } // Faster than waiting for full network idle
       }),
     });
 
     if (!response.ok) {
-      console.warn(`Browserless API returned ${response.status}, using fallback metadata extraction`);
       return extractMetadataFallback(url);
     }
 
-    const jsonResponse = await response.json();
-    const html = jsonResponse.data[0].results[0].html;
+    const html = await response.text();
     const $ = cheerio.load(html);
 
-    let creatorName = 'Unknown';
-    const jsonLdScript = $('script[type="application/ld+json"]').html();
-    if (jsonLdScript) {
-      try {
-        const jsonData = JSON.parse(jsonLdScript);
-        const graph = jsonData['@graph'] || [jsonData];
-        for (const item of graph) {
-          if (
-            (item['@type'] === 'VideoObject' || item['@type'] === 'Clip') &&
-            item.author?.name
-          ) {
-            creatorName = item.author.name;
-            break;
-          }
-          if (item.author?.name) {
-            creatorName = item.author.name;
-            break;
-          }
-        }
-      } catch (e) {
-        console.error('Failed to parse JSON-LD', e);
-      }
-    }
-
+    // Helper to grab the best meta tag
     const getMetaTag = (name: string) => {
-      let content = $(`meta[property="og:${name}"]`).attr('content');
-      if (!content) {
-        content = $(`meta[name="${name}"]`).attr('content');
-      }
-      return content || '';
+      return $(`meta[property="og:${name}"]`).attr('content') || 
+             $(`meta[name="${name}"]`).attr('content') || 
+             $(`meta[property="twitter:${name}"]`).attr('content') || '';
     };
 
-    if (creatorName === 'Unknown') {
-      creatorName =
-        getMetaTag('author') ||
-        getMetaTag('article:author') ||
-        $('#upload-info a.yt-simple-endpoint').first().text() ||
-        getMetaTag('og:site_name') ||
-        'Unknown';
-    }
+    let creatorName = getMetaTag('site_name') || getMetaTag('author') || 'Unknown';
 
     return {
       title: getMetaTag('title') || $('title').text() || 'No title found',
@@ -143,6 +125,7 @@ const CategorizeSharedVideoLinkOutputSchema = z.object({
   thumbnailUrl: z
     .string()
     .describe("A URL for the video's thumbnail image."),
+    platform: z.string().describe('The name of the platform hosting the link (e.g., YouTube, Instagram, GitHub, Article).'),
 });
 export type CategorizeSharedVideoLinkOutput = z.infer<
   typeof CategorizeSharedVideoLinkOutputSchema
@@ -154,7 +137,7 @@ export async function categorizeSharedVideoLink(
   return categorizeSharedVideoLinkFlow(input);
 }
 
-const prompt = ai.definePrompt({
+const categorizePrompt = ai.definePrompt({
   name: 'categorizeSharedVideoLinkPrompt',
   input: {
     schema: z.object({
@@ -164,16 +147,22 @@ const prompt = ai.definePrompt({
   },
   output: {
     schema: z.object({
-      category: z.string().describe('The predicted category of the video.'),
+      category: z.string().describe('The predicted category of the link.'),
       confidence: z
         .number()
         .min(0)
         .max(1)
         .describe('The confidence level of the category prediction (0 to 1).'),
+        platform: z.string(),
     }),
+
   },
-  prompt: `You are an AI expert in categorizing videos. Based on the following title and description, assign the most accurate category.
-  Available categories: Music, Sports, Education, Movies, News, Gaming, Entertainment, or suggest a new one if none fit well.
+  // UPGRADE: Tell the AI it is categorizing ANY web link, not just videos, 
+  // and add categories like 'Technology', 'AI', and 'Productivity'.
+  prompt: `You are an AI expert in categorizing web links, websites, articles, and videos. Based on the following title and description, assign the most accurate category.
+  Available categories: Technology, AI, Productivity, Education, Entertainment, Music, Sports, News, Gaming, or suggest a new one if none fit well.
+  
+  If the title or description says "No title found", assign the category "Other" with a confidence of 0.5.
   
   Title: {{title}}
   Description: {{description}}`,
@@ -185,25 +174,49 @@ const categorizeSharedVideoLinkFlow = ai.defineFlow(
     inputSchema: CategorizeSharedVideoLinkInputSchema,
     outputSchema: CategorizeSharedVideoLinkOutputSchema,
   },
-  async input => {
+  async (input) => {
     const metadata = await extractMetadata(input.link);
-    const {output} = await prompt({
-      title: metadata.title,
-      description: metadata.description,
-    });
     
-    if (!output) {
-      throw new Error("Failed to get a response from the AI model.");
-    }
+    // GUARANTEE strings so Zod validation never throws an error
+    const safeTitle = metadata.title || 'No title found';
+    const safeDescription = metadata.description || 'No description found';
+    const safeCreatorName = metadata.creatorName || 'Unknown';
+    const safeThumbnailUrl = metadata.thumbnailUrl || ''; // Forces empty string if undefined
+    
+    try {
+      // Execute the Gemini prompt with Genkit
+      const { output } = await categorizePrompt({
+        title: safeTitle,
+        description: safeDescription,
+      });
+      
+      if (!output) {
+        throw new Error("Failed to get structured output from Gemini.");
+      }
 
-    return {
-      title: metadata.title,
-      description: metadata.description,
-      creatorName: metadata.creatorName,
-      thumbnailUrl: metadata.thumbnailUrl,
-      category: output.category,
-      confidence: output.confidence,
-    };
+      return {
+        title: safeTitle,
+        description: safeDescription,
+        creatorName: safeCreatorName,
+        thumbnailUrl: safeThumbnailUrl,
+        category: output.category || 'Other',
+        confidence: output.confidence || 0.5,
+        platform: output.platform ,
+      };
+      
+    } catch (error) {
+      console.error('Gemini classification failed:', error);
+      
+      // Fallback response so the UI doesn't crash if the AI fails
+      return {
+        title: safeTitle,
+        description: safeDescription,
+        creatorName: safeCreatorName,
+        thumbnailUrl: safeThumbnailUrl,
+        category: 'Other',
+        confidence: 0.5,
+        platform: 'Web',
+      };
+    }
   }
 );
-

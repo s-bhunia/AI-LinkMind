@@ -12,6 +12,14 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: 'https',
+        hostname: '**', // The double-asterisk allows any HTTPS domain
+      },
+      {
+        protocol: 'http',
+        hostname: '**', // Allows HTTP domains just in case
+      },
+      {
+        protocol: 'https',
         hostname: 'placehold.co',
         port: '',
         pathname: '/**',
@@ -42,6 +50,12 @@ const nextConfig: NextConfig = {
       }
     ],
   },
+  allowedDevOrigins: [
+    '*',
+    '192.168.0.103',
+    'localhost',
+    '127.0.0.1',
+  ],
 };
 
 export default nextConfig;

@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { v4 as uuidv4 } from "uuid";
 import { Plus, Loader, AlertTriangle, Wand2, CheckCircle, Link2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -88,7 +89,7 @@ export function LinkForm({ onLinkAdded, existingCategories, links }: LinkFormPro
       const result = data.data;
       if (result.confidence >= 0.8) {
         const newLink: SavedLink = {
-          id: crypto.randomUUID(),
+          id: uuidv4(),
           url: values.url,
           title: result.title,
           description: result.description,
@@ -125,7 +126,7 @@ export function LinkForm({ onLinkAdded, existingCategories, links }: LinkFormPro
   const handleManualCategorySelection = (category: string) => {
     if (!categorizationResult || !url) return;
     const newLink: SavedLink = {
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         url: url,
         title: categorizationResult.title,
         description: categorizationResult.description,
