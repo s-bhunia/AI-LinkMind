@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -35,31 +35,52 @@ export function LinkForm({ onLinkAdded, existingCategories, links }: LinkFormPro
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
   const { toast } = useToast();
 
+  // Track if the current submission is coming from the hidden Android app
+  const isBackgroundShareRef = useRef(false);
+
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: { url: "" },
   });
 
   useEffect(() => {
-    // Define the global function for Android WebView to call
-    (window as any).setSharedUrl = (url: string) => {
-      form.setValue('url', url, { shouldValidate: true });
+    console.log("LinkForm mounted, AndroidBridge available:", !!window.AndroidBridge);
+    
+    // 1. Define the global function FIRST
+    (window as any).setSharedUrl = async (sharedUrl: string) => {
+      isBackgroundShareRef.current = true;
+      form.setValue('url', sharedUrl, { shouldValidate: true });
+      
+      setTimeout(() => {
+        form.handleSubmit(onSubmit)();
+      }, 100);
     };
 
-    // Cleanup function: remove the global function when the component unmounts
+    // 2. NOW tell Android we are ready for the link
+    if (window.AndroidBridge && typeof window.AndroidBridge.notifyAppReady === 'function') {
+      console.log("Notifying Android: Web App Ready");
+      window.AndroidBridge.notifyAppReady();
+    }
+
     return () => {
       delete (window as any).setSharedUrl;
     };
-  }, [form]); // Re-run effect if the form instance changes (unlikely for this component)
+  }, [form]); 
 
   async function onSubmit(values: z.infer<typeof formSchema>) {
 
+    // FIX 2: Handle duplicates gracefully for Android
     if (links.some(link => link.url === values.url)) {
       toast({
         variant: "destructive",
         title: "Duplicate Link",
         description: "This link has already been saved.",
       });
+      // Tell Android to close anyway so it doesn't hang
+      if (isBackgroundShareRef.current && window.AndroidBridge) {
+        window.AndroidBridge.notifyLinkSaved();
+        isBackgroundShareRef.current = false;
+      }
       return;
     }
 
@@ -68,7 +89,6 @@ export function LinkForm({ onLinkAdded, existingCategories, links }: LinkFormPro
     setUrl(values.url);
 
     try {
-      // Use API endpoint instead of direct server action to avoid caching issues
       const response = await fetch('/api/link-categorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -87,39 +107,38 @@ export function LinkForm({ onLinkAdded, existingCategories, links }: LinkFormPro
       }
 
       const result = data.data;
-      if (result.confidence >= 0.8) {
+      
+      if (result.confidence >= 0.8 || isBackgroundShareRef.current) {
         const newLink: SavedLink = {
           id: uuidv4(),
           url: values.url,
           title: result.title,
           description: result.description,
           creatorName: result.creatorName,
-          category: result.category,
+          category: result.category || "Uncategorized", // Fallback just in case
           thumbnailUrl: result.thumbnailUrl,
+          platform: result.platform,
           createdAt: new Date().toISOString(),
         };
         onLinkAdded(newLink);
-        toast({
-          description: (
-            <div className="flex items-center gap-2">
-              <CheckCircle className="text-green-500" />
-              <span>Link saved and categorized as {result.category}.</span>
-            </div>
-          ),
-        });
         form.reset();
+        
+        if (isBackgroundShareRef.current && window.AndroidBridge) {
+          window.AndroidBridge.notifyLinkSaved();
+        }
       } else {
+        // Normal web user workflow - show the dialog
         setCategorizationResult(result);
       }
     } catch (error) {
       console.error('Categorization error:', error);
-      toast({
-        variant: "destructive",
-        title: "Uh oh! Something went wrong.",
-        description: error instanceof Error ? error.message : "There was a problem categorizing your link.",
-      });
+      
+      if (isBackgroundShareRef.current && window.AndroidBridge) {
+        window.AndroidBridge.notifySaveFailed();
+      }
     } finally {
       setIsSubmitting(false);
+      isBackgroundShareRef.current = false; // Reset the flag
     }
   }
 
@@ -133,6 +152,7 @@ export function LinkForm({ onLinkAdded, existingCategories, links }: LinkFormPro
         creatorName: categorizationResult.creatorName,
         category: category,
         thumbnailUrl: categorizationResult.thumbnailUrl,
+        platform: categorizationResult.platform,
         createdAt: new Date().toISOString(),
     };
     onLinkAdded(newLink);
@@ -150,6 +170,10 @@ export function LinkForm({ onLinkAdded, existingCategories, links }: LinkFormPro
     setNewCategory('');
     setShowNewCategoryInput(false);
     form.reset();
+    // Notify Android that the link was saved successfully
+    if (window.AndroidBridge && typeof window.AndroidBridge.notifyLinkSaved === 'function') {
+      window.AndroidBridge.notifyLinkSaved();
+    }
   };
 
   const handleNewCategorySubmit = () => {

@@ -28,7 +28,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { url, title, description, category, creatorName, thumbnailUrl } = body;
+    const { url, title, description, category, creatorName, thumbnailUrl, platform } = body;
 
     // Validate required fields
     if (!url || !title || !category) {
@@ -47,6 +47,7 @@ export async function POST(request: Request) {
       category,
       creatorName: creatorName || 'Unknown',
       thumbnailUrl: thumbnailUrl || '',
+      platform: platform || 'Web',
       createdAt: new Date().toISOString(),
     };
 

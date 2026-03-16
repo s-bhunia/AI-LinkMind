@@ -4,7 +4,11 @@ import { useState, useMemo } from "react";
 import { LinkCard } from "./link-card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+<<<<<<< Updated upstream
 import { Search, Inbox, SlidersHorizontal, LayoutGrid, List, Layers, CalendarArrowDown, CalendarArrowUp } from "lucide-react";
+=======
+import { Search, Inbox, SlidersHorizontal, LayoutGrid, List, Layers, CalendarArrowDown, CalendarArrowUp, ChevronDown } from "lucide-react";
+>>>>>>> Stashed changes
 import type { SavedLink } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +34,12 @@ export function LinkLibrary({ links, onDelete }: LinkLibraryProps) {
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc"); // desc = newest first
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [groupByPlatform, setGroupByPlatform] = useState(false);
+<<<<<<< Updated upstream
+=======
+  
+  // Track collapsed state: true = collapsed, false = expanded
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+>>>>>>> Stashed changes
 
   // Extract unique categories for the dropdown
   const dynamicCategories = useMemo(() => {
@@ -37,6 +47,21 @@ export function LinkLibrary({ links, onDelete }: LinkLibraryProps) {
     return ["All", ...Array.from(categories).sort()];
   }, [links]);
 
+<<<<<<< Updated upstream
+=======
+  // Toggle collapse state for a section
+  const toggleSectionCollapse = (groupName: string) => {
+    setCollapsedSections(prev => {
+      // If undefined, it defaults to true (collapsed), so clicking it makes it false (expanded)
+      const isCurrentlyCollapsed = prev[groupName] ?? true;
+      return {
+        ...prev,
+        [groupName]: !isCurrentlyCollapsed,
+      };
+    });
+  };
+
+>>>>>>> Stashed changes
   // The Master Pipeline: Filter -> Sort
   const filteredAndSortedLinks = useMemo(() => {
     return links
@@ -65,7 +90,11 @@ export function LinkLibrary({ links, onDelete }: LinkLibraryProps) {
     const groups: Record<string, SavedLink[]> = {};
     filteredAndSortedLinks.forEach(link => {
       // Safely handle missing platforms by defaulting to 'Web'
+<<<<<<< Updated upstream
       const platform = (link as any).platform || "Web";
+=======
+      const platform = (link as any).platform || 'Web';
+>>>>>>> Stashed changes
       if (!groups[platform]) groups[platform] = [];
       groups[platform].push(link);
     });
@@ -106,7 +135,17 @@ export function LinkLibrary({ links, onDelete }: LinkLibraryProps) {
             variant={groupByPlatform ? "default" : "outline"} 
             size="sm" 
             className="h-9"
+<<<<<<< Updated upstream
             onClick={() => setGroupByPlatform(!groupByPlatform)}
+=======
+            onClick={() => {
+              setGroupByPlatform(!groupByPlatform);
+              if (!groupByPlatform) {
+                // Reset collapse state when turning on grouping so all default to collapsed
+                setCollapsedSections({}); 
+              }
+            }}
+>>>>>>> Stashed changes
           >
             <Layers className="h-4 w-4 mr-2" />
             {groupByPlatform ? "Grouped" : "Group by Platform"}
@@ -187,6 +226,7 @@ export function LinkLibrary({ links, onDelete }: LinkLibraryProps) {
       {/* --- RENDER CONTENT --- */}
       {filteredAndSortedLinks.length > 0 ? (
         <div className="space-y-10 animate-in fade-in-50 duration-500">
+<<<<<<< Updated upstream
           {Object.entries(groupedLinks).map(([groupName, groupLinks]) => (
             <div key={groupName} className="space-y-4">
               
@@ -214,6 +254,53 @@ export function LinkLibrary({ links, onDelete }: LinkLibraryProps) {
               
             </div>
           ))}
+=======
+          {Object.entries(groupedLinks).map(([groupName, groupLinks]) => {
+            // If grouped, default to true (collapsed). If not grouped, always false (expanded).
+            const isGroupCollapsed = groupByPlatform ? (collapsedSections[groupName] ?? true) : false;
+
+            return (
+              <div key={groupName} className="space-y-4">
+                
+                {/* Render Section Headers only if grouping is enabled */}
+                {groupByPlatform && (
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => toggleSectionCollapse(groupName)}
+                      className="p-1 hover:bg-muted rounded transition-colors flex-shrink-0"
+                      aria-label={isGroupCollapsed ? "Expand section" : "Collapse section"}
+                    >
+                      <ChevronDown 
+                        className={`h-5 w-5 transition-transform duration-200 ${
+                          isGroupCollapsed ? "rotate-0" : "rotate-180"
+                        }`}
+                      />
+                    </button>
+                    <h2 className="text-xl font-heading font-semibold tracking-tight">{groupName}</h2>
+                    <div className="h-px bg-border flex-grow mt-1" />
+                    <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+                      {groupLinks.length}
+                    </span>
+                  </div>
+                )}
+
+                {/* Render Grid or List based on View Mode - Conditional on Collapse State */}
+                {!isGroupCollapsed && (
+                  <div className={
+                    viewMode === "grid" 
+                      ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" 
+                      : "flex flex-col gap-3"
+                  }>
+                    {groupLinks.map((link) => (
+                      <LinkCard key={link.id} link={link} onDelete={onDelete} viewMode={viewMode} />
+                    ))}
+                  </div>
+                )}
+                
+              </div>
+            );
+          })}
+>>>>>>> Stashed changes
         </div>
       ) : (
         <div className="text-center py-16 px-4 border-2 border-dashed rounded-lg animate-in fade-in-0 duration-500">

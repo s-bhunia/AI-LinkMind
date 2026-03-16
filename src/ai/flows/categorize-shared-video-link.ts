@@ -153,7 +153,11 @@ const categorizePrompt = ai.definePrompt({
         .min(0)
         .max(1)
         .describe('The confidence level of the category prediction (0 to 1).'),
+<<<<<<< Updated upstream
         platform: z.string(),
+=======
+        platform: z.string().describe('The platform hosting the link (e.g., YouTube, Instagram, GitHub, Article).'),
+>>>>>>> Stashed changes
     }),
 
   },
